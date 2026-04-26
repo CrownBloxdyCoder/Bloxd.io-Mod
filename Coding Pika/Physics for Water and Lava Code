@@ -1,0 +1,194 @@
+// ====== CONFIG ======
+const WATER_BLOCK_TYPE = "Water";
+const LAVA_BLOCK_TYPE  = "Lava";
+
+const MAX_LEVEL = 5;              
+const TICKS_PER_UPDATE_WATER = 3;
+const TICKS_PER_UPDATE_LAVA  = 8;
+const SPREAD_PER_TICK = 50;
+
+// ====== INTERNAL STATE ======
+let waterLevels = new Map();
+let lavaLevels  = new Map();
+
+let waterQueue = new Set();
+let lavaQueue  = new Set();
+
+let tickCounter = 0;
+let changesThisTick = 0;
+
+// ====== HELPERS ======
+function k(x,y,z){ return `${x},${y},${z}`; }
+function parseK(key){ const [x,y,z] = key.split(",").map(Number); return {x,y,z}; }
+function safeGetBlock(x,y,z){ return api.getBlock ? api.getBlock(x,y,z) : null; }
+function safeSetBlock(x,y,z,b){ if(api.setBlock) api.setBlock(x,y,z,b); }
+
+function isReplaceableBlock(x,y,z){
+  const b = safeGetBlock(x,y,z);
+  return !b || b === "Air";
+}
+
+// ====== WATER FUNCTIONS ======
+function setWaterAt(x,y,z,level){
+  if(level>MAX_LEVEL) return;
+  const key = k(x,y,z);
+  if(waterLevels.get(key)===level) return;
+  waterLevels.set(key,level);
+  safeSetBlock(x,y,z,WATER_BLOCK_TYPE);
+  waterQueue.add(key);
+}
+
+function removeWaterAt(x,y,z){
+  const key = k(x,y,z);
+  if(!waterLevels.has(key)) return;
+  waterLevels.delete(key);
+  safeSetBlock(x,y,z,"Air");
+  [[1,0,0],[-1,0,0],[0,0,1],[0,0,-1],[0,-1,0]].forEach(d=>waterQueue.add(k(x+d[0],y+d[1],z+d[2])));
+}
+
+function placeWaterSource(x,y,z){
+  setWaterAt(x,y,z,0);
+  waterQueue.add(k(x,y,z));
+}
+
+// ====== EXTRA: REMOVE WATER IN RADIUS ======
+function removeWaterInRadius(cx, cy, cz, radius = 15){
+  const r2 = radius * radius;
+  const toRemove = [];
+
+  for(const key of waterLevels.keys()){
+    const {x, y, z} = parseK(key);
+    const dx = x - cx;
+    const dy = y - cy;
+    const dz = z - cz;
+    if(dx*dx + dy*dy + dz*dz <= r2){
+      toRemove.push({x,y,z});
+    }
+  }
+
+  for(const pos of toRemove){
+    removeWaterAt(pos.x, pos.y, pos.z);
+  }
+}
+
+// ====== LAVA FUNCTIONS ======
+function setLavaAt(x,y,z,level){
+  if(level>MAX_LEVEL) return;
+  const key = k(x,y,z);
+  if(lavaLevels.get(key)===level) return;
+  lavaLevels.set(key,level);
+  safeSetBlock(x,y,z,LAVA_BLOCK_TYPE);
+  lavaQueue.add(key);
+}
+
+function removeLavaAt(x,y,z){
+  const key = k(x,y,z);
+  if(!lavaLevels.has(key)) return;
+  lavaLevels.delete(key);
+  safeSetBlock(x,y,z,"Air");
+  [[1,0,0],[-1,0,0],[0,0,1],[0,0,-1],[0,-1,0]].forEach(d=>lavaQueue.add(k(x+d[0],y+d[1],z+d[2])));
+}
+
+function placeLavaSource(x,y,z){
+  setLavaAt(x,y,z,0);
+  lavaQueue.add(k(x,y,z));
+}
+
+// ====== SPREAD ALGORITHM ======
+function runSpreadStep(queue, levelsMap, blockType){
+  const processing = Array.from(queue);
+  queue.clear();
+  processing.forEach(key=>{
+    const {x,y,z} = parseK(key);
+    const currentLevel = levelsMap.get(key);
+    if(safeGetBlock(x,y,z)!==blockType){ levelsMap.delete(key); return; }
+
+    // Flow downward
+    if(isReplaceableBlock(x,y-1,z)){
+      levelsMap.set(k(x,y-1,z),0);
+      safeSetBlock(x,y-1,z,blockType);
+      queue.add(k(x,y-1,z));
+      if(currentLevel>0){ levelsMap.set(key,currentLevel+1); queue.add(key); }
+      return;
+    }
+
+    // Flow horizontally
+    [[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]].forEach(d=>{
+      const nx=x+d[0], ny=y+d[1], nz=z+d[2];
+      if(!isReplaceableBlock(nx,ny,nz)) return;
+      const nKey = k(nx,ny,nz);
+      const nextLevel = currentLevel+1;
+      if(nextLevel>MAX_LEVEL) return;
+      if(levelsMap.get(nKey)===undefined || nextLevel<levelsMap.get(nKey)){
+        levelsMap.set(nKey,nextLevel);
+        safeSetBlock(nx,ny,nz,blockType);
+        queue.add(nKey);
+      }
+    });
+
+    // Remove if exceeded
+    if(currentLevel>MAX_LEVEL){
+      levelsMap.delete(key);
+      safeSetBlock(x,y,z,"Air");
+    }
+
+    // Lava fire
+    if(blockType===LAVA_BLOCK_TYPE){
+      [[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]].forEach(d=>{
+        const nx=x+d[0], ny=y+d[1], nz=z+d[2];
+        const b = safeGetBlock(nx,ny,nz);
+        if(b==="Wood"||b==="Leaves"){ safeSetBlock(nx,ny,nz,"Fire"); }
+      });
+    }
+  });
+}
+
+// ====== TICK ======
+function tick(){
+  tickCounter++;
+  if(tickCounter % TICKS_PER_UPDATE_WATER === 0)
+    runSpreadStep(waterQueue, waterLevels, WATER_BLOCK_TYPE);
+
+  if(tickCounter % TICKS_PER_UPDATE_LAVA === 0)
+    runSpreadStep(lavaQueue, lavaLevels, LAVA_BLOCK_TYPE);
+}
+
+// ====== CALLBACKS ======
+function onPlayerChangeBlock(playerId,x,y,z,oldBlock,newBlock){
+
+  if(newBlock===WATER_BLOCK_TYPE) 
+    placeWaterSource(x,y,z);
+
+  if(oldBlock===WATER_BLOCK_TYPE){
+    removeWaterAt(x,y,z);
+    removeWaterInRadius(x, y, z, 15);  // ← NEW FEATURE
+  }
+
+  if(newBlock===LAVA_BLOCK_TYPE) 
+    placeLavaSource(x,y,z);
+
+  if(oldBlock===LAVA_BLOCK_TYPE) 
+    removeLavaAt(x,y,z);
+}
+
+function onPlayerPlaceBlock(){ 
+  const args=Array.from(arguments);
+  for(let i=0;i<args.length;i++){
+    const a=args[i];
+    if(a && a.x!==undefined && a.y!==undefined && a.z!==undefined){
+      const type = args[i+1];
+      if(type===WATER_BLOCK_TYPE) placeWaterSource(a.x,a.y,a.z);
+      if(type===LAVA_BLOCK_TYPE) placeLavaSource(a.x,a.y,a.z);
+      break;
+    }
+  }
+}
+
+// ====== EXPORT ======
+this.tick = tick;
+this.onPlayerChangeBlock = onPlayerChangeBlock;
+this.onPlayerPlaceBlock = onPlayerPlaceBlock;
+
+this.waterPhysics = { placeWaterSource, removeWaterAt, setWaterAt, waterLevels };
+this.lavaPhysics  = { placeLavaSource, removeLavaAt, setLavaAt, lavaLevels };
+
