@@ -1,0 +1,149 @@
+kameState = {};
+kameLights = [];
+
+/* --- STABLE PARTICLE HELPER (Giant Orbs) --- */
+emitGiantKi = (pos, col, size) => {
+    api.playParticleEffect({
+        texture: "generic_2",
+        minLifeTime: 0.5,
+        maxLifeTime: 0.8,
+        minEmitPower: 0,
+        maxEmitPower: 1,
+        minSize: size,
+        maxSize: size + 1,
+        gravity: [0, 0, 0],
+        velocityGradients: [{ timeFraction: 0, factor: 1, factor2: 1 }, { timeFraction: 1, factor: 0, factor2: 0 }],
+        colorGradients: [{ timeFraction: 0, minColor: col, maxColor: col }, { timeFraction: 1, minColor: col, maxColor: col }],
+        blendMode: 1,
+        dir1: [0, 0, 0],
+        dir2: [0, 0, 0],
+        pos1: [pos[0] - 0.1, pos[1] - 0.1, pos[2] - 0.1],
+        pos2: [pos[0] + 0.1, pos[1] + 0.1, pos[2] + 0.1],
+        manualEmitCount: 1,
+        hideDist: 100
+    });
+};
+
+onPlayerChat = (id, msg) => {
+    if (msg === "!kame") {
+        var now = api.now();
+        if (kameState[id]) return false;
+
+        /* 12s total: 7s Charge, 5s Blast */
+        kameState[id] = { start: now, fire: now + 7000, end: now + 12000, stage: 0, lastTick: 0 };
+
+        /* DIM LIGHTING START */
+        api.setClientOptions(id, { 
+            "lightingOverride": true, 
+            "skyLightColourOverride": "#151535", 
+            "skyBox": "space_blue" 
+        });
+
+        /* CHARGE POSE: Hands meeting at the front-right hip */
+        api.animateEntity(id, {
+            animationDurationMs: 7000, loop: false,
+            nodeAnimations: {
+                TorsoNode: { timeline: [{ timeFraction: 0, rotation: { point: [0.1, -0.6, 0] } }] },
+                HeadMesh: { timeline: [{ timeFraction: 0, rotation: { point: [0.1, 0.4, 0] } }] },
+                /* Arms pulled forward and inward to the hip */
+                ArmRightMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-0.6, 0, 0.4] } }] },
+                ArmLeftMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-1.0, 0, 1.4] } }] }
+            }
+        }, 0.2);
+
+        api.playSound(id, "low_hum", 0.8, 0.4, { playerIdOrPos: id });
+        return false;
+    }
+    return true;
+};
+
+tick = (ms) => {
+    var now = api.now();
+    var ids = api.getPlayerIds();
+
+    for (var i = 0; i < ids.length; i++) {
+        var id = ids[i];
+        var s = kameState[id];
+        if (!s) continue;
+
+        var pP = api.getPosition(id);
+        if (!pP) continue;
+
+        /* RESET LOGIC */
+        if (now > s.end) {
+            api.setClientOptions(id, { "lightingOverride": false, "skyBox": "default" });
+            for (var l = 0; l < kameLights.length; l++) { api.setBlock(kameLights[l].x, kameLights[l].y, kameLights[l].z, "Air"); }
+            kameLights = [];
+            api.animateEntity(id, { animationDurationMs: 200, loop: false, nodeAnimations: { 
+                TorsoNode: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, 0] } }] },
+                ArmRightMesh: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, 0] } }] },
+                ArmLeftMesh: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, 0] } }] }
+            }}, 0.1);
+            delete kameState[id];
+            continue;
+        }
+
+        var f = api.getPlayerFacingInfo(id);
+
+        /* --- PHASE 1: CHARGE --- */
+        if (now < s.fire) {
+            var sx = pP[0] + f.dir[0] * 0.4;
+            var sy = pP[1] + 0.8;
+            var sz = pP[2] + f.dir[2] * 0.4;
+
+            /* One-time light source at hip */
+            if (s.stage === 0) {
+                var lx = Math.floor(sx), ly = Math.floor(sy), lz = Math.floor(sz);
+                if (api.getBlock(lx, ly, lz) === "Air") { 
+                    api.setBlock(lx, ly, lz, "Invisible Light Blue Light"); 
+                    kameLights.push({x:lx, y:ly, z:lz}); 
+                }
+                s.stage = 1;
+            }
+            
+            var progress = (now - s.start) / 7000;
+            emitGiantKi([sx, sy, sz], [180, 230, 255, 1], 0.5 + (progress * 2.5));
+        } 
+        /* --- PHASE 2: BLAST --- */
+        else {
+            if (s.stage === 1) {
+                api.playSound(id, "explosion", 1, 0.5, { playerIdOrPos: id });
+                /* BLAST POSE: Hands together in front */
+                api.animateEntity(id, {
+                    animationDurationMs: 5000, loop: false,
+                    nodeAnimations: {
+                        TorsoNode: { timeline: [{ timeFraction: 0, rotation: { point: [0.6, 0, 0] } }] },
+                        ArmRightMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-1.57, 0, 0.2] } }] },
+                        ArmLeftMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-1.57, 0, -0.2] } }] }
+                    }
+                }, 0.1);
+
+                /* Place 2 lights along the beam path once */
+                var dists = [8, 25];
+                for(var d=0; d<dists.length; d++) {
+                    var bx = Math.floor(pP[0] + f.dir[0] * dists[d]);
+                    var by = Math.floor(pP[1] + 1.5 + f.dir[1] * dists[d]);
+                    var bz = Math.floor(pP[2] + f.dir[2] * dists[d]);
+                    if (api.getBlock(bx, by, bz) === "Air") { 
+                        api.setBlock(bx, by, bz, "Invisible Light Blue Light"); 
+                        kameLights.push({x:bx, y:by, z:bz}); 
+                    }
+                }
+                s.stage = 2;
+            }
+
+            /* GIANT PARTICLE BEAM: Updates every 150ms to prevent lag */
+            if (now - s.lastTick > 150) {
+                for (var beamD = 2; beamD < 38; beamD += 7) {
+                    var px = pP[0] + (f.dir[0] * beamD);
+                    var py = pP[1] + 1.5 + (f.dir[1] * beamD);
+                    var pz = pP[2] + (f.dir[2] * beamD);
+                    emitGiantKi([px, py, pz], [150, 220, 255, 1], 6.5);
+                }
+                s.lastTick = now;
+            }
+        }
+    }
+};
+
+onPlayerLeave = (id) => { delete kameState[id]; };
