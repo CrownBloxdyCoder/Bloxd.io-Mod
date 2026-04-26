@@ -1,0 +1,5 @@
+api.changePlayerIntoSkin(myId, "head", "farmer")
+api.changePlayerIntoSkin(myId, "head", "Wizard")
+api.changePlayerIntoSkin(myId, "head", "Zombie")
+api.changePlayerIntoSkin(myId, "head", "portal_mage")
+api.changePlayerIntoSkin(myId, "head", "trader")
