@@ -1,0 +1,80 @@
+api.setClientOption(playerId, "lightingOverride", true)
+
+api.animateEntity(myId, {
+    animationDurationMs: 2400,
+    loop: true,
+    nodeAnimations: {
+        TorsoNode: {
+            timeline: [
+                { timeFraction: 0.0, rotation: { point: [0, 0, 0] } },
+                { timeFraction: 0.25, rotation: { point: [0.1, 0.2, 0] } },
+                { timeFraction: 0.5, rotation: { point: [0, 0, 0] } },
+                { timeFraction: 0.75, rotation: { point: [0.1, -0.2, 0] } },
+                { timeFraction: 1.0, rotation: { point: [0, 0, 0] } }
+            ]
+        },
+
+        HeadMesh: {
+            timeline: [
+                { timeFraction: 0.0, rotation: { point: [0, 0, 0] } },
+                { timeFraction: 0.25, rotation: { point: [0.2, 0.2, 0] } },
+                { timeFraction: 0.5, rotation: { point: [0, 0, 0] } },
+                { timeFraction: 0.75, rotation: { point: [0.2, -0.2, 0] } },
+                { timeFraction: 1.0, rotation: { point: [0, 0, 0] } }
+            ]
+        },
+
+        ArmRightMesh: {
+            timeline: [
+                { timeFraction: 0.0, rotation: { point: [-0.5, 0, 0.6] } },
+                { timeFraction: 0.25, rotation: { point: [-0.2, 0, -0.6] } },
+                { timeFraction: 0.5, rotation: { point: [-0.5, 0, 0.6] } },
+                { timeFraction: 0.75, rotation: { point: [-0.2, 0, -0.6] } },
+                { timeFraction: 1.0, rotation: { point: [-0.5, 0, 0.6] } }
+            ]
+        },
+
+        ArmLeftMesh: {
+            timeline: [
+                { timeFraction: 0.0, rotation: { point: [-0.2, 0, -0.6] } },
+                { timeFraction: 0.25, rotation: { point: [-0.5, 0, 0.6] } },
+                { timeFraction: 0.5, rotation: { point: [-0.2, 0, -0.6] } },
+                { timeFraction: 0.75, rotation: { point: [-0.5, 0, 0.6] } },
+                { timeFraction: 1.0, rotation: { point: [-0.2, 0, -0.6] } }
+            ]
+        },
+
+        LegRightMesh: {
+            timeline: [
+                { timeFraction: 0.0, rotation: { point: [0.4, 0, 0] } },
+                { timeFraction: 0.25, rotation: { point: [-0.4, 0, 0] } },
+                { timeFraction: 0.5, rotation: { point: [0.4, 0, 0] } },
+                { timeFraction: 0.75, rotation: { point: [-0.4, 0, 0] } },
+                { timeFraction: 1.0, rotation: { point: [0.4, 0, 0] } }
+            ]
+        },
+
+        LegLeftMesh: {
+            timeline: [
+                { timeFraction: 0.0, rotation: { point: [-0.4, 0, 0] } },
+                { timeFraction: 0.25, rotation: { point: [0.4, 0, 0] } },
+                { timeFraction: 0.5, rotation: { point: [-0.4, 0, 0] } },
+                { timeFraction: 0.75, rotation: { point: [0.4, 0, 0] } },
+                { timeFraction: 1.0, rotation: { point: [-0.4, 0, 0] } }
+            ]
+        }
+    }
+});
+
+api.giveItem(myId, "Red Neon", 1)
+api.giveItem(myId, "Orange Neon", 1)
+api.giveItem(myId, "Yellow Neon", 1)
+api.giveItem(myId, "Lime Neon", 1)
+api.giveItem(myId, "Light Blue Neon", 1)
+api.giveItem(myId, "Cyan Neon", 1)
+api.giveItem(myId, "Blue Neon", 1)
+api.giveItem(myId, "Purple Neon", 1)
+api.giveItem(myId, "Magenta Neon", 1)
+api.giveItem(myId, "Pink Neon", 1)
+
+api.broadcastMessage("put all of your neon blocks in to your inventory and then scroll through them or spam number keys to have party lights, have fun partying bloxdchacho!!", { color: "#CEF3FF"})
