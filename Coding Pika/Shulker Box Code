@@ -1,8 +1,14 @@
 // made by x_Drxth :D
 // licensed under CC BY 4.0
+
 const shulkerbox = [84,104,105,115,32,87,111,114,108,100,32,73,115,32,76,111,97,100,101,100,32,87,105,116,104,32,120,95,68,114,120,116,104,39,115,32,83,104,117,108,107,101,114,32,66,111,120,32,67,111,100,101,33]
+
 function onPlayerJoin(e){api.editItemCraftingRecipes(e,"Iron Chest",[{requires:[{items:["Iron Bar"],amt:9},{items:["Chest"],amt:1},{items:["Knight Heart"],amt:2}],produces:1,station:"Workbench"}]),api.sendMessage(e,[{str: String.fromCharCode(...shulkerbox) + " Craft It Using 9 Iron Bar, 1 Chest & 2 Knight Heart!",style:{color:"white",fontWeight:"bold"}},{str:"\n\nInfo:",style:{fontWeight:"bold",color:"yellow",fontSize:"18px"}},{str:"\nA Shulker Box is a special storage item in Minecraft that can be placed anywhere and opened like a chest. When broken, it drops as an item with all its contents still inside. Iron Chests are now Shulker Boxes!",style:{color:"gold"}}])/* u can remove this info if u want */};
+
 function shulkerTooltip(n){const l=n.filter((n=>null!=n)),t=n.filter((n=>"empty"==n)).length>0||n.filter((n=>null==n)).length>=36,e=l.map((n=>(null==n.amount?1:n.amount)+"x "+n.name)).splice(0,5),o=l.length-e.length;return t?"Empty":l.length>5?e.join("\n")+"\nAnd "+o+" more.":e.join("\n")}
+
 function onPlayerChangeBlock(t,e,s,i,r,a,o,n,c){if("Air"!=r&&r.includes("Iron Chest"))return api.createItemDrop(e+.5,s+.5,i+.5,"White Paintball",1,!1,{customAttributes:api.getBlockData(e,s,i),customDescription:shulkerTooltip(void 0!==api.getBlockData(e,s,i)&&void 0!==api.getBlockData(e,s,i).persisted&&void 0!==api.getBlockData(e,s,i).persisted.chestStr&&void 0!==api.getBlockData(e,s,i).persisted.passkey?eval(api.getBlockData(e,s,i).persisted.chestStr):["empty"]),customDisplayName:"Iron Chest"}),api.setBlockData(e,s,i,{persisted:{chestStr:[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]}}),"preventDrop";"Air"!=a&&a.includes("Iron Chest")&&api.setBlockData(e,s,i,{persisted:api.getHeldItem(t).attributes.customAttributes.persisted})}
+
 function onPlayerAttemptOpenChest(e,t,s,a,p,i){i&&0!=api.getBlockData(t,s,a).persisted.passkey&&api.setBlockData(t,s,a,{persisted:{passkey:0}})}
+
 function onPlayerAttemptAltAction(t,e,a,i,l){if(null!=api.getHeldItem(t)&&"White Paintball"==api.getHeldItem(t).name&&api.getPlayerTargetInfo(t)){let e=api.getPlayerTargetInfo(t);api.setBlock(...e.adjacent,"Iron Chest"),api.setBlockData(e.adjacent[0],e.adjacent[1],e.adjacent[2],{persisted:api.getHeldItem(t).attributes.customAttributes.persisted}),api.setItemSlot(t,api.getSelectedInventorySlotI(t),"Air")}}
