@@ -1,0 +1,2 @@
+ api.updateEntityNodeMeshAttachment(myId, "TorsoNode", "BloxdBlock", 
+{blockName:"Diamond", size:1, meshOffset:[0, 0, 0]}, [0, 1, 0], [0, 0, 0])
