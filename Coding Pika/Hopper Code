@@ -1,0 +1,6 @@
+/*To be added in world code*/
+
+/*Made by SHADOW_PROGRAMMER45 and helped by Famous Pegasus Pro*/
+const h=(e,i,a,x,y,z,r)=>{for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){let wY=null;for(let o=0;o<=15;o++)if(api.getBlock(x+dx,y-o,z+dz)?.startsWith("Black Concrete Slab")){wY=y-o;break;}if(wY===null)continue;let cY=null;for(let o=1;o<=2;o++)if(api.getBlock(x+dx,wY-o,z+dz)?.startsWith("Chest")){cY=wY-o;break;}if(cY===null)continue;const m=api.getInitialItemMetadata(i),s=m?.stackable??false,max=999;let l=a;if(s)for(let j=0;j<27&&l>0;j++){const d=api.getStandardChestItemSlot([x+dx,cY,z+dz],j);if(d&&d.name===i&&d.amount<max){const add=Math.min(max-d.amount,l);api.setStandardChestItemSlot([x+dx,cY,z+dz],j,i,d.amount+add);l-=add;}}for(let j=0;j<27&&l>0;j++){const d=api.getStandardChestItemSlot([x+dx,cY,z+dz],j);if(!d){const put=s?Math.min(l,max):1;api.setStandardChestItemSlot([x+dx,cY,z+dz],j,i,put);l-=put;}}if(l<=0)return r;}};  
+onItemDropCreated=(e,i,a,x,y,z)=>{if(h(e,i,a,x,y,z,true))api.deleteItemDrop(e);};  
+onPlayerDropItem=(p,x,y,z,i,a,f)=>h(null,i,a,x,y,z,"allowButNoDroppedItemCreated");
