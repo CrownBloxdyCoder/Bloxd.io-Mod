@@ -1,0 +1,175 @@
+/* --- GLOBAL DATA --- */
+ninjaStates = {};
+burningTargets = {};
+modWelcome = false;
+
+/* --- PARTICLE HELPER --- */
+spawnNinjaFire = (pos, count) => {
+    api.playParticleEffect({
+        texture: "generic_2",
+        minLifeTime: 0.3, maxLifeTime: 0.5,
+        minEmitPower: 1, maxEmitPower: 2,
+        minSize: 0.1, maxSize: 0.2,
+        gravity: [0, 6, 0],
+        velocityGradients: [{ timeFraction: 0, factor: 1, factor2: 1 }, { timeFraction: 1, factor: 0, factor2: 0 }],
+        colorGradients: [{ timeFraction: 0, minColor: [255, 120, 0, 1], maxColor: [255, 200, 0, 1] }, { timeFraction: 1, minColor: [200, 50, 0, 1], maxColor: [0, 0, 0, 0] }],
+        blendMode: 1, dir1: [-1, 1, -1], dir2: [1, 1, 1],
+        pos1: [pos[0] - 0.2, pos[1], pos[2] - 0.2], pos2: [pos[0] + 0.2, pos[1] + 0.8, pos[2] + 0.2],
+        manualEmitCount: count, hideDist: 35
+    });
+};
+
+/* --- COMMANDS --- */
+onPlayerChat = (id, msg) => {
+    if (!ninjaStates[id]) ninjaStates[id] = { active: false, mode: "none" };
+
+    if (msg === "!ninja") {
+        api.removeItemName(id, "Iron Sword", 99);
+        ninjaStates[id].active = true;
+        api.setClientOptions(id, { speedMultiplier: 1.4, jumpAmount: 11, canClimbWalls: true });
+        api.giveItem(id, "Iron Sword", 1, { customDisplayName: "Flame Dagger" });
+        api.sendMessage(id, "Ninja Mode: ON", { color: "lime" });
+        return false;
+    }
+
+    if (msg === "!off") {
+        ninjaStates[id].active = false;
+        api.setClientOptions(id, { speedMultiplier: 1, jumpAmount: 8, canClimbWalls: false });
+        api.removeItemName(id, "Iron Sword", 99);
+        api.sendMessage(id, "Ninja Mode: OFF", { color: "red" });
+        return false;
+    }
+    return true;
+};
+
+/* --- COMBAT --- */
+onPlayerClick = (id, wasAlt) => {
+    if (wasAlt || !ninjaStates[id] || !ninjaStates[id].active) return;
+    var held = api.getHeldItem(id);
+    if (held && held.name === "Iron Sword") {
+        var f = api.getPlayerFacingInfo(id);
+        var p = api.getPosition(id);
+        spawnNinjaFire([p[0] + f.dir[0] * 1.5, p[1] + 1.2, p[2] + f.dir[2] * 1.5], 3);
+    }
+};
+
+onPlayerDamagingOtherPlayer = (atkr, vic) => handleNinjaHit(atkr, vic);
+onPlayerDamagingMob = (atkr, mob) => handleNinjaHit(atkr, mob);
+
+handleNinjaHit = (atkr, vic) => {
+    if (ninjaStates[atkr] && ninjaStates[atkr].active) {
+        var held = api.getHeldItem(atkr);
+        if (held && held.name === "Iron Sword") {
+            api.applyEffect(vic, "Poisoned", 5000, { displayName: "Burning" });
+            burningTargets[vic] = api.now() + 5000;
+        }
+    }
+};
+
+/* --- MAIN TICK LOOP --- */
+tick = (ms) => {
+    var now = api.now(), ids = api.getPlayerIds();
+
+    if (!modWelcome) {
+        api.broadcastMessage("--- NINJA MOD LOADED ---", { color: "lime", fontWeight: "bold" });
+        api.broadcastMessage("Commands: !ninja | !off", { color: "white" });
+        api.broadcastMessage("Flame Dagger burns for 5s.", { color: "white" });
+        modWelcome = true;
+    }
+
+    /* 1. Burn & Water Logic */
+    for (var tId in burningTargets) {
+        if (now > burningTargets[tId] || !api.checkValid(tId) || !api.isAlive(tId)) { 
+            delete burningTargets[tId]; 
+            continue; 
+        }
+        
+        var blocks = api.getBlockTypesPlayerStandingOn(tId);
+        var inWater = false;
+        if (blocks) { for(var b=0; b<blocks.length; b++) { if(blocks[b].includes("Water")) inWater = true; } }
+        
+        if (inWater) { 
+            api.removeEffect(tId, "Poisoned"); /* Remove damage effect in water */
+            delete burningTargets[tId]; 
+            continue; 
+        }
+        
+        var tPos = api.getPosition(tId);
+        if (tPos) spawnNinjaFire(tPos, 2);
+    }
+
+    /* 2. Animations */
+    for (var i = 0; i < ids.length; i++) {
+        var id = ids[i];
+        if (!ninjaStates[id] || !ninjaStates[id].active) continue;
+        var s = ninjaStates[id];
+
+        var vel = api.getVelocity(id);
+        var hSpdSq = vel[0] * vel[0] + vel[2] * vel[2];
+        
+        var target = api.getPlayerTargetInfo(id);
+        var isNearWall = false;
+        if (target && target.position) {
+            var pPos = api.getPosition(id);
+            if (Math.sqrt(Math.pow(pPos[0]-target.position[0], 2) + Math.pow(pPos[2]-target.position[2], 2)) < 1.5) isNearWall = true;
+        }
+        var isClimbing = vel[1] > 0.1 && isNearWall;
+
+        if (isClimbing) {
+            if (s.mode !== "climbing") {
+                api.animateEntity(id, {
+                    animationDurationMs: 400, loop: true,
+                    nodeAnimations: {
+                        TorsoNode: { timeline: [{ timeFraction: 0, rotation: { point: [0.5, 0, 0] } }] },
+                        ArmRightMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-1.8, 0, -0.07] } }, { timeFraction: 0.5, rotation: { point: [-0.6, 0, -0.07] } }, { timeFraction: 1, rotation: { point: [-1.8, 0, -0.07] } }] },
+                        ArmLeftMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-0.6, 0, 0.07] } }, { timeFraction: 0.5, rotation: { point: [-1.8, 0, 0.07] } }, { timeFraction: 1, rotation: { point: [-0.6, 0, 0.07] } }] },
+                        LegRightMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-1.1, 0, -0.05] } }, { timeFraction: 0.5, rotation: { point: [-0.3, 0, -0.05] } }, { timeFraction: 1, rotation: { point: [-1.1, 0, -0.05] } }] },
+                        LegLeftMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-0.3, 0, 0.05] } }, { timeFraction: 0.5, rotation: { point: [-1.1, 0, 0.05] } }, { timeFraction: 1, rotation: { point: [-0.3, 0, 0.05] } }] }
+                    }
+                }, 0.1);
+                s.mode = "climbing";
+            }
+        }
+        else if (hSpdSq > 50 && Math.abs(vel[1]) < 0.1) {
+            if (s.mode !== "ninja") {
+                api.setPlayerPose(id, "standing");
+                api.animateEntity(id, {
+                    animationDurationMs: 350, loop: true,
+                    nodeAnimations: {
+                        TorsoNode: { timeline: [
+                            { timeFraction: 0.0, rotation: { point: [0.9, 0, 0] } },
+                            { timeFraction: 0.25, rotation: { point: [0.95, 0, 0.15] } }, /* SWAY LEFT */
+                            { timeFraction: 0.5, rotation: { point: [0.9, 0, 0] } },
+                            { timeFraction: 0.75, rotation: { point: [0.95, 0, -0.15] } }, /* SWAY RIGHT */
+                            { timeFraction: 1.0, rotation: { point: [0.9, 0, 0] } }
+                        ]},
+                        HeadMesh: { timeline: [{ timeFraction: 0, rotation: { point: [-0.5, 0, 0] } }] },
+                        ArmRightMesh: { timeline: [{ timeFraction: 0, rotation: { point: [1.0, 0, -0.07] } }] },
+                        ArmLeftMesh: { timeline: [{ timeFraction: 0, rotation: { point: [1.0, 0, 0.07] } }] },
+                        LegRightMesh: { timeline: [{ timeFraction: 0.0, rotation: { point: [-0.9, 0, -0.05] } }, { timeFraction: 0.5, rotation: { point: [0.9, 0, -0.05] } }, { timeFraction: 1.0, rotation: { point: [-0.9, 0, -0.05] } }]},
+                        LegLeftMesh: { timeline: [{ timeFraction: 0.0, rotation: { point: [0.9, 0, 0.05] } }, { timeFraction: 0.5, rotation: { point: [-0.9, 0, 0.05] } }, { timeFraction: 1.0, rotation: { point: [0.9, 0, 0.05] } }]}
+                    }
+                }, 0.1);
+                s.mode = "ninja";
+            }
+        }
+        else {
+            if (s.mode !== "none") {
+                api.animateEntity(id, {
+                    animationDurationMs: 150, loop: false,
+                    nodeAnimations: {
+                        TorsoNode: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, 0] } }] },
+                        HeadMesh: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, 0] } }] },
+                        ArmRightMesh: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, -0.07] } }] },
+                        ArmLeftMesh: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, 0.07] } }] },
+                        LegRightMesh: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, -0.05] } }] },
+                        LegLeftMesh: { timeline: [{ timeFraction: 1, rotation: { point: [0, 0, 0.05] } }] }
+                    }
+                }, 0.1);
+                s.mode = "none";
+            }
+        }
+    }
+};
+
+onPlayerLeave = (id) => { delete ninjaStates[id]; delete burningTargets[id]; };
