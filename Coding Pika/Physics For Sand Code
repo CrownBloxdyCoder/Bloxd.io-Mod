@@ -1,0 +1,333 @@
+/*
+  Falling Blocks Physics for Bloxd.io
+  - Paste this file into your map script editor.
+  - Configure GRAVITY_BLOCKS to the block names/IDs you use for sand-like blocks.
+  - The script will detect unsupported gravity blocks (e.g., when placed in mid-air or when the block below is removed)
+    and make them fall until they land on a solid block. It simulates simple gravity (velocity, acceleration) and
+    is conservative to avoid heavy CPU usage.
+
+  Behavior summary:
+  - When a gravity block has no solid block directly beneath, it becomes a "falling" object (removed from world)
+    and will move downward each tick until it finds support, then re-places the block there.
+  - When a supporting block is removed, the column above is scanned (up to SCAN_HEIGHT) to trigger falls.
+  - State is persisted via doPeriodicSave / api.readSaveData / api.writeSaveData if available.
+
+  NOTES:
+  - Tweak constants below (ACCEL, MAX_STEP, TICKS_PER_UPDATE) to change feel/performance.
+  - If your engine supports entities, you could extend to spawn a visible falling entity; here we simulate with blocks.
+*/
+
+// ===== CONFIG =====
+const GRAVITY_BLOCKS = ["Sand", "Red Sand", "Diamond Ore"]; // block names used as gravity blocks
+const TICKS_PER_UPDATE = 1;    // how many game ticks between physics updates (1 => every tick)
+const ACCEL = 0.6;            // gravity acceleration (vy increases by this each update)
+const MAX_STEP = 4;           // max blocks a falling block can move in a single update (safety)
+const SCAN_HEIGHT = 32;       // how many blocks above a removal to scan for unsupported gravity blocks
+const PERSIST_KEY = "falling_blocks_state_v1";
+const SAFETY_LIMIT_PER_TICK = 500; // max falling blocks processed per tick to avoid lag
+
+// ---- extra configuration for "non-physical" behaviour ----
+// If you want blocks to be able to fall into negative Y values and stop at an arbitrary negative Y,
+// change FALL_TO_NEGATIVE = true and set NEGATIVE_STOP_Y to the value you want (e.g. -5).
+const FALL_UNITS_PER_TICK = 1;   // how many block-units to move per tick (stepwise visual). Keep as integer >=1.
+const FALL_TO_NEGATIVE = true;   // allow falling past y=0 into negative y-values
+const MIN_WORLD_Y = -100;        // world bottom clamp if FALL_TO_NEGATIVE true (safety lower bound)
+const NEGATIVE_STOP_Y = -5;      // default negative Y where blocks will land if they reach or pass it. Set to null to disable.
+
+
+// ===== STATE =====
+// Map key "x,y,z" -> {x,y,z,type, vy}
+let fallingMap = new Map();
+let tickCounter = 0;
+
+// ===== HELPERS =====
+function key(x,y,z){ return `${x},${y},${z}`; }
+function parseKey(k){ const [x,y,z]=k.split(',').map(Number); return {x,y,z}; }
+
+function safeGetBlock(x,y,z){ if (typeof api.getBlock === 'function') return api.getBlock(x,y,z); return null; }
+function safeSetBlock(x,y,z, block){ if (typeof api.setBlock === 'function') return api.setBlock(x,y,z, block); return null; }
+
+function isReplaceableBlock(x,y,z){
+  const b = safeGetBlock(x,y,z);
+  if (!b) return true;
+  if (typeof b === 'string') return (b === "Air" || b === "" || b === null);
+  if (typeof b.name === 'string') return (b.name === "Air" || b.name === "" || b.name === null);
+  if (b.type) return b.type === "Air";
+  return false;
+}
+
+function isGravityBlockType(b){
+  if (!b) return false;
+  if (typeof b === 'string') return GRAVITY_BLOCKS.includes(b);
+  if (typeof b.name === 'string') return GRAVITY_BLOCKS.includes(b.name);
+  return false;
+}
+
+// ===== CORE LOGIC =====
+function startFalling(x,y,z, type){
+  const k = key(x,y,z);
+  // if already falling, skip
+  if (fallingMap.has(k)) return;
+  // remove the block from world (make Air) to simulate leaving a gap
+  safeSetBlock(x,y,z, "Air");
+  // create falling entry with initial vy = 0
+  fallingMap.set(k, {x, y, z, type, vy: 0});
+}
+
+function landBlock(entry, landY){
+  // place block of entry.type at landY
+  safeSetBlock(entry.x, landY, entry.z, entry.type);
+  // remove from falling map (key is old pos)
+  const oldKey = key(entry.x, entry.y, entry.z);
+  // Also remove any entry keyed by its current runtime pos if exists
+  fallingMap.delete(oldKey);
+  // trigger check for blocks above landing pos (they might now be supported, no action required) or if landing replaces air
+  // After landing, check blocks above the landing spot for possible chain reactions (we'll scan above in other handlers)
+}
+
+function processFallingEntry(oldKey, entry){
+  // Integrate gradual, floor-by-floor movement so blocks visibly occupy each y = n position
+  // Support falling into negative Y and landing at NEGATIVE_STOP_Y for 'phi vật lý' effects.
+
+  // update velocity
+  entry.vy += ACCEL;
+  // determine integer movement from vy, clamped by MAX_STEP
+  let rawSteps = Math.floor(entry.vy);
+  if (rawSteps > MAX_STEP) rawSteps = MAX_STEP;
+  if (rawSteps < -MAX_STEP) rawSteps = -MAX_STEP;
+
+  // limit how many block units we actually move in a single game tick to create visible "floor-by-floor" motion
+  const perTick = (typeof FALL_UNITS_PER_TICK !== 'undefined') ? FALL_UNITS_PER_TICK : 1;
+  let steps = 0;
+  if (rawSteps > 0) steps = Math.min(rawSteps, perTick);
+  else if (rawSteps < 0) steps = Math.max(rawSteps, -perTick);
+  else steps = 0;
+
+  // nothing to do this tick (accumulating fractional vy)
+  if (steps === 0) return false;
+
+  // determine minimum allowed Y (world bottom)
+  const minY = (typeof MIN_WORLD_Y !== 'undefined') ? MIN_WORLD_Y : (FALL_TO_NEGATIVE ? -100 : 0);
+
+  // DOWNWARD movement
+  if (steps > 0){
+    for (let s = 1; s <= steps; s++){
+      const targetY = entry.y - 1; // move one block down at a time
+
+      // if reached configured bottom-of-world
+      if (targetY <= minY){
+        // if a NEGATIVE_STOP_Y is configured, land there (even if it's above minY)
+        if (typeof NEGATIVE_STOP_Y !== 'undefined' && NEGATIVE_STOP_Y !== null){
+          landBlock(entry, NEGATIVE_STOP_Y);
+        }else{
+          landBlock(entry, minY);
+        }
+        return true;
+      }
+
+      // if space below is free -> move the visual block there (step-by-step)
+      if (isReplaceableBlock(entry.x, targetY, entry.z)){
+        // place the block at the new lower position to show falling
+        safeSetBlock(entry.x, targetY, entry.z, entry.type);
+        // clear the previous visual block if it still contains the falling type
+        try{
+          const prev = safeGetBlock(entry.x, entry.y, entry.z);
+          if (prev){
+            if ((typeof prev === 'string' && prev === entry.type) || (prev.name && prev.name === entry.type)){
+              safeSetBlock(entry.x, entry.y, entry.z, "Air");
+            }
+          }
+        }catch(e){ /* ignore read errors */ }
+
+        // update entry position in map
+        const oldKeyLocal = key(entry.x, entry.y, entry.z);
+        entry.y = targetY;
+        const newKey = key(entry.x, entry.y, entry.z);
+        fallingMap.delete(oldKeyLocal);
+        fallingMap.set(newKey, entry);
+
+        // consume 1 unit of integer velocity
+        entry.vy = entry.vy - 1;
+        // continue loop to possibly perform additional per-tick steps
+        continue;
+      }else{
+        // there's a solid block directly below -> land on top of it
+        const landY = targetY + 1;
+        landBlock(entry, landY);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // UPWARD movement (steps < 0)
+  if (steps < 0){
+    const absSteps = Math.abs(steps);
+    for (let s = 1; s <= absSteps; s++){
+      const targetY = entry.y + 1; // move up one
+      // if we hit a ceiling
+      if (!isReplaceableBlock(entry.x, targetY, entry.z)){
+        // settle at current position
+        safeSetBlock(entry.x, entry.y, entry.z, entry.type);
+        fallingMap.delete(oldKey);
+        return true;
+      }
+
+      // otherwise move up one and update state
+      safeSetBlock(entry.x, targetY, entry.z, entry.type);
+      try{
+        const prev = safeGetBlock(entry.x, entry.y, entry.z);
+        if (prev){
+          if ((typeof prev === 'string' && prev === entry.type) || (prev.name && prev.name === entry.type)){
+            safeSetBlock(entry.x, entry.y, entry.z, "Air");
+          }
+        }
+      }catch(e){ }
+
+      const oldKeyLocal = key(entry.x, entry.y, entry.z);
+      entry.y = targetY;
+      const newKey = key(entry.x, entry.y, entry.z);
+      fallingMap.delete(oldKeyLocal);
+      fallingMap.set(newKey, entry);
+
+      // adjust vy accordingly
+      entry.vy = entry.vy - steps; // steps is negative here
+    }
+
+    return false;
+  }
+
+  return false;
+}
+
+function runPhysicsStep(){
+  if (fallingMap.size === 0) return;
+  let processed = 0;
+  // copy keys to avoid mutation issues
+  const keys = Array.from(fallingMap.keys());
+  for (const k of keys){
+    if (processed >= SAFETY_LIMIT_PER_TICK) break;
+    const entry = fallingMap.get(k);
+    if (!entry) continue;
+    const finished = processFallingEntry(k, entry);
+    processed++;
+  }
+}
+
+// Scan column above (x,y,z) for gravity blocks and start them falling if unsupported
+function scanAboveAndTrigger(x,y,z){
+  for (let yy = y+1; yy <= y + SCAN_HEIGHT; yy++){
+    const b = safeGetBlock(x, yy, z);
+    if (!b) continue;
+    if (isGravityBlockType(b)){
+      // check support below this block
+      if (isReplaceableBlock(x, yy-1, z)){
+        startFalling(x, yy, z, (typeof b === 'string') ? b : b.name);
+      }
+    }else{
+      // if it's non-gravity block, we can stop scanning further upward once a solid non-gravity is encountered?
+      // Not necessarily — still continue scanning since sand can stack on top of sand; we continue.
+    }
+  }
+}
+
+// ===== CALLBACKS =====
+function tick(){
+  tickCounter++;
+  if (tickCounter % TICKS_PER_UPDATE !== 0) return;
+  runPhysicsStep();
+}
+
+// Called when a block is changed by a player (or some APIs)
+function onPlayerChangeBlock(playerId, x,y,z, oldBlock, newBlock){
+  // If a gravity block was placed at (x,y,z) and has no support, make it fall
+  if (newBlock && isGravityBlockType(newBlock)){
+    if (isReplaceableBlock(x, y-1, z)){
+      const typename = (typeof newBlock === 'string') ? newBlock : newBlock.name;
+      startFalling(x,y,z, typename);
+    }
+  }
+
+  // If a block was removed (oldBlock was something and newBlock is air), scan above for gravity blocks to fall
+  const removed = (oldBlock && !isGravityBlockType(newBlock));
+  if (removed){
+    // scan column above for possibly unsupported gravity blocks
+    scanAboveAndTrigger(x, y, z);
+  }
+}
+
+// Generic world changes may also require reaction
+function onWorldChangeBlock(x,y,z, oldBlock, newBlock){
+  // propagate to same handler
+  onPlayerChangeBlock(null, x,y,z, oldBlock, newBlock);
+}
+
+// Some engines call a generic place handler with variable args — try to detect
+function onPlayerPlaceBlock(){
+  const args = Array.from(arguments);
+  for (let i=0;i<args.length;i++){
+    const a = args[i];
+    if (typeof a === 'object' && a.x !== undefined && a.y !== undefined && a.z !== undefined){
+      const type = args[i+1];
+      if (type && isGravityBlockType(type)){
+        if (isReplaceableBlock(a.x, a.y - 1, a.z)){
+          const typename = (typeof type === 'string') ? type : type.name;
+          startFalling(a.x, a.y, a.z, typename);
+        }
+      }
+      break;
+    }
+  }
+}
+
+function onChunkLoaded(chunkX, chunkZ){
+  // re-validate falling blocks within this chunk (if persisted or left dangling)
+  for (const k of Array.from(fallingMap.keys())){
+    const p = parseKey(k);
+    if (Math.floor(p.x/16) === chunkX && Math.floor(p.z/16) === chunkZ) {
+      // re-check if needs to fall (we keep it falling anyway)
+      // no special action necessary right now except to keep it in map
+    }
+  }
+}
+
+// Save/Load state
+function saveState(){
+  if (typeof api.writeSaveData === 'function'){
+    try{
+      const arr = Array.from(fallingMap.entries());
+      api.writeSaveData(PERSIST_KEY, JSON.stringify(arr));
+    }catch(e){ console.error('Failed to save falling blocks', e); }
+  }
+}
+
+function loadState(){
+  if (typeof api.readSaveData === 'function'){
+    try{
+      const raw = api.readSaveData(PERSIST_KEY);
+      if (!raw) return;
+      const arr = JSON.parse(raw);
+      fallingMap = new Map(arr);
+    }catch(e){ console.error('Failed to load falling blocks', e); }
+  }
+}
+
+function doPeriodicSave(){ saveState(); }
+
+// init
+(function init(){ loadState(); })();
+
+// Export callbacks expected by engine
+this.tick = tick;
+this.onPlayerChangeBlock = onPlayerChangeBlock;
+this.onWorldChangeBlock = onWorldChangeBlock;
+this.onPlayerPlaceBlock = onPlayerPlaceBlock;
+this.onChunkLoaded = onChunkLoaded;
+this.doPeriodicSave = doPeriodicSave;
+
+// Expose for debugging
+this.fallingBlocks = fallingMap;
+this.debug_fallStats = function(){ console.log('[FALL] count=', fallingMap.size); };
+
+/* End of falling block physics */
