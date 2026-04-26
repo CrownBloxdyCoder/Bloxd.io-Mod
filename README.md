@@ -23,7 +23,7 @@ Welcome to the official **Bloxd Mod** repository. [cite_start]This is a curated 
 
 ## 🛠️ 🟩 How to Use
 1.  [cite_start]Browse and select the mod folder or file you wish to use.
-2.  Read the documentation or the `About.md` file located inside the folder.some folder not have 'about.md'.
+2.  Read the documentation or the `About.md` file located inside the folder.some folder not have `About.md`.
 3.  [cite_start]Copy the **Code Blocks** or **World Code** into Bloxd.io as per the instructions.
 
 ## 🤝 🟨 Contribution
