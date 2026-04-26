@@ -1,0 +1,83 @@
+//credits to ModiNSLT3
+const CHUNK_SIZE = 32
+let chunkEffects = {}
+let playerState = {}
+const EFFECTS = [
+ "Speed",
+ "Jump Boost",
+ "Haste",
+  "Hydrated",
+ "Invisible",
+ "Poisoned",
+ "Slowness",
+ "Weakness",
+ "Health Regen",
+ "Double Jump",
+ "Heat Resistance",
+ "Thief",
+ "X-Ray Vision",
+ "Mining Yield",
+ "Brain Rot",
+ "Feather Falling",
+ "Bounciness",
+ "Wall Climbing",
+ "Air Walk",
+ "Pickpocketer",
+ "Lifesteal",
+ "Blindness",
+ "Thorns",
+ "Poopy"
+]
+
+function getChunkCoord(v) {
+ return Math.floor(v / CHUNK_SIZE)
+}
+function getChunkKey(pos) {
+ let cx = getChunkCoord(pos[0])
+ let cy = getChunkCoord(pos[1])
+ let cz = getChunkCoord(pos[2])
+ return cx + "," + cy + "," + cz
+}
+function randomEffect() {
+ return EFFECTS[Math.floor(Math.random() * EFFECTS.length)]
+}
+function forceEffect(playerId, effectName) {
+ let current = api.getEffects(playerId)
+ if (!current.includes(effectName)) {
+  api.applyEffect(playerId, effectName, null, { inbuiltLevel: 1 })
+ }
+}
+function removeEffect(playerId, effectName) {
+ api.removeEffect(playerId, effectName)
+}
+tick = () => {
+ let players = api.getPlayerIds()
+ if (!players || players.length === 0) {
+  chunkEffects = {}
+  playerState = {}
+  return
+ }
+ for (let id of players) {
+  let pos = api.getPosition(id)
+  if (!pos) continue
+  let chunkKey = getChunkKey(pos)
+  if (!chunkEffects[chunkKey]) {
+   chunkEffects[chunkKey] = randomEffect()
+  }
+  let effect = chunkEffects[chunkKey]
+  let state = playerState[id]
+
+  if (!state) {
+   playerState[id] = { chunkKey, effect }
+   forceEffect(id, effect)
+   continue
+  }
+  if (state.chunkKey !== chunkKey) {
+   removeEffect(id, state.effect)
+   playerState[id] = { chunkKey, effect }
+   forceEffect(id, effect)
+   continue
+  }
+  forceEffect(id, effect)
+ }
+}
