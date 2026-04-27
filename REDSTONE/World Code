@@ -1,0 +1,359 @@
+PLATE_BLOCK = "Brown Carpet"
+WIRE_BLOCK = "Red Carpet"
+POWER_BLOCK = "Fireball Block"
+
+LAMP_OFF = "Dim Lamp Off"
+LAMP_ON = "Dim Lamp On"
+
+UP_NORMAL_BASE = "Engraved Stone"
+DOWN_NORMAL_BASE = "Engraved Andesite"
+UP_STICKY_BASE = "Block of Emerald"
+DOWN_STICKY_BASE = "Green Bricks"
+
+NORMAL_SLAB_BASE = "Engraved Stone Slab"
+STICKY_SLAB_BASE = "Mossy Stone Slab"
+
+PUSH_LIMIT = 1
+MAX_WIRE = 300
+
+if (typeof pistonExtended === "undefined") pistonExtended = {}
+if (typeof knownLamps === "undefined") knownLamps = {}
+if (typeof fireballSources === "undefined") fireballSources = {}
+
+posKey = (x, y, z) => x + "," + y + "," + z
+
+isAir = (b) => b === "Air"
+
+isBlockType = (blockName, baseName) => {
+    if (typeof blockName !== "string") return false
+    if (blockName === baseName) return true
+    return blockName.indexOf(baseName + "|") === 0
+}
+
+isLampBlock = (b) => isBlockType(b, LAMP_OFF) || isBlockType(b, LAMP_ON)
+isLampOffBlock = (b) => isBlockType(b, LAMP_OFF)
+isLampOnBlock = (b) => isBlockType(b, LAMP_ON)
+
+addKnownLamp = (x, y, z) => { knownLamps[posKey(x, y, z)] = true }
+removeKnownLamp = (x, y, z) => { delete knownLamps[posKey(x, y, z)] }
+
+trackMoveIfLamp = (fromX, fromY, fromZ, toX, toY, toZ, movedBlockName) => {
+    if (!isLampBlock(movedBlockName)) return
+    removeKnownLamp(fromX, fromY, fromZ)
+    addKnownLamp(toX, toY, toZ)
+}
+
+addFireballSource = (x, y, z) => { fireballSources[posKey(x, y, z)] = { x: x, y: y, z: z } }
+removeFireballSource = (x, y, z) => { delete fireballSources[posKey(x, y, z)] }
+
+onPlayerChangeBlock = (playerId, x, y, z, fromBlock, toBlock, droppedItem, fromBlockInfo, toBlockInfo) => {
+    if (isBlockType(toBlock, POWER_BLOCK)) addFireballSource(x, y, z)
+    if (isBlockType(fromBlock, POWER_BLOCK) && !isBlockType(toBlock, POWER_BLOCK)) removeFireballSource(x, y, z)
+
+    if (isLampBlock(toBlock)) addKnownLamp(x, y, z)
+    if (isLampBlock(fromBlock) && !isLampBlock(toBlock)) removeKnownLamp(x, y, z)
+}
+
+onWorldChangeBlock = (x, y, z, fromBlock, toBlock, initiatorDbId) => {
+    if (isBlockType(toBlock, POWER_BLOCK)) addFireballSource(x, y, z)
+    if (isBlockType(fromBlock, POWER_BLOCK) && !isBlockType(toBlock, POWER_BLOCK)) removeFireballSource(x, y, z)
+
+    if (isLampBlock(toBlock)) addKnownLamp(x, y, z)
+    if (isLampBlock(fromBlock) && !isLampBlock(toBlock)) removeKnownLamp(x, y, z)
+}
+
+getPlateUnderPlayer = (playerId) => {
+    const coords = api.getBlockCoordinatesPlayerStandingOn(playerId)
+    for (const c of coords) {
+        const bx = c[0], by = c[1], bz = c[2]
+        if (api.getBlock(bx, by, bz) === PLATE_BLOCK) return [bx, by, bz]
+        if (api.getBlock(bx, by + 1, bz) === PLATE_BLOCK) return [bx, by + 1, bz]
+        if (api.getBlock(bx, by + 2, bz) === PLATE_BLOCK) return [bx, by + 2, bz]
+    }
+    return null
+}
+
+makeHeadName = (slabBase, dy, slabRot) => {
+    if (dy === -1) return slabBase
+    if (dy === 0) return slabBase + "|meta|" + slabRot + "|side"
+    return slabBase + "|meta|" + slabRot + "|top"
+}
+
+isNormalHeadBlock = (b) => {
+    if (b === NORMAL_SLAB_BASE) return true
+    return typeof b === "string" &&
+        b.indexOf(NORMAL_SLAB_BASE + "|meta|") === 0 &&
+        (b.indexOf("|top") !== -1 || b.indexOf("|side") !== -1)
+}
+
+isStickyHeadBlock = (b) => {
+    if (b === STICKY_SLAB_BASE) return true
+    return typeof b === "string" &&
+        b.indexOf(STICKY_SLAB_BASE + "|meta|") === 0 &&
+        (b.indexOf("|top") !== -1 || b.indexOf("|side") !== -1)
+}
+
+isPistonBaseBlockName = (b) => {
+    if (b === UP_NORMAL_BASE || b === DOWN_NORMAL_BASE || b === UP_STICKY_BASE || b === DOWN_STICKY_BASE) return true
+    return (typeof b === "string" && b.indexOf("Mailbox") === 0)
+}
+
+trackMoveIfPistonBase = (fromX, fromY, fromZ, toX, toY, toZ, movedBlockName) => {
+    if (!isPistonBaseBlockName(movedBlockName)) return
+    const fromK = posKey(fromX, fromY, fromZ)
+    const toK = posKey(toX, toY, toZ)
+    if (pistonExtended[fromK]) {
+        pistonExtended[toK] = true
+        delete pistonExtended[fromK]
+    } else if (typeof pistonExtended[fromK] !== "undefined") {
+        delete pistonExtended[fromK]
+    }
+}
+
+getPistonInfoAt = (x, y, z) => {
+    const b = api.getBlock(x, y, z)
+
+    if (b === UP_NORMAL_BASE) return { kind: "normal", dx: 0, dy: 1, dz: 0, head: makeHeadName(NORMAL_SLAB_BASE, 1, "rot1") }
+    if (b === DOWN_NORMAL_BASE) return { kind: "normal", dx: 0, dy: -1, dz: 0, head: makeHeadName(NORMAL_SLAB_BASE, -1, "rot1") }
+    if (b === UP_STICKY_BASE) return { kind: "sticky", dx: 0, dy: 1, dz: 0, head: makeHeadName(STICKY_SLAB_BASE, 1, "rot1") }
+    if (b === DOWN_STICKY_BASE) return { kind: "sticky", dx: 0, dy: -1, dz: 0, head: makeHeadName(STICKY_SLAB_BASE, -1, "rot1") }
+
+    if (typeof b === "string" && b.indexOf("Mailbox") === 0) {
+        const sticky = (b.indexOf("|full") !== -1)
+        const kind = sticky ? "sticky" : "normal"
+        const slabBase = sticky ? STICKY_SLAB_BASE : NORMAL_SLAB_BASE
+
+        let dx = 0, dy = 0, dz = 1
+        let mailboxRot = "rot1"
+
+        if (b.indexOf("rot2") !== -1) { dx = 1; dz = 0; mailboxRot = "rot2" }
+        else if (b.indexOf("rot3") !== -1) { dx = 0; dz = -1; mailboxRot = "rot3" }
+        else if (b.indexOf("rot4") !== -1) { dx = -1; dz = 0; mailboxRot = "rot4" }
+        else { dx = 0; dz = 1; mailboxRot = "rot1" }
+
+        let slabRot = "rot3"
+        if (mailboxRot === "rot2") slabRot = "rot4"
+        else if (mailboxRot === "rot4") slabRot = "rot2"
+        else if (mailboxRot === "rot3") slabRot = "rot1"
+
+        return { kind: kind, dx: dx, dy: dy, dz: dz, head: makeHeadName(slabBase, 0, slabRot) }
+    }
+
+    return null
+}
+
+pushInDirUpToLimit = (sx, sy, sz, dx, dy, dz, limit) => {
+    const blocks = []
+    let foundAir = false
+
+    for (let i = 0; i <= limit; i++) {
+        const x = sx + dx * i
+        const y = sy + dy * i
+        const z = sz + dz * i
+        const bb = api.getBlock(x, y, z)
+
+        if (isAir(bb)) { foundAir = true; break }
+
+        if (isPistonBaseBlockName(bb)) {
+            const k = posKey(x, y, z)
+            if (pistonExtended[k]) return false
+        }
+
+        blocks.push([x, y, z, bb])
+    }
+
+    if (!foundAir) return false
+
+    for (let j = blocks.length - 1; j >= 0; j--) {
+        const from = blocks[j]
+        const fx = from[0], fy = from[1], fz = from[2], b = from[3]
+        const tx = fx + dx, ty = fy + dy, tz = fz + dz
+
+        api.setBlock(tx, ty, tz, b)
+        api.setBlock(fx, fy, fz, "Air")
+
+        trackMoveIfLamp(fx, fy, fz, tx, ty, tz, b)
+        trackMoveIfPistonBase(fx, fy, fz, tx, ty, tz, b)
+    }
+
+    return true
+}
+
+extendPiston = (bx, by, bz, info) => {
+    const k = posKey(bx, by, bz)
+    if (pistonExtended[k]) return
+
+    const hx = bx + info.dx
+    const hy = by + info.dy
+    const hz = bz + info.dz
+
+    const ok = pushInDirUpToLimit(hx, hy, hz, info.dx, info.dy, info.dz, PUSH_LIMIT)
+    if (!ok) return
+
+    if (isAir(api.getBlock(hx, hy, hz))) api.setBlock(hx, hy, hz, info.head)
+    pistonExtended[k] = true
+}
+
+powerNetworkFromSource = (srcX, wireY, srcZ, poweredPistons, poweredLamps) => {
+    const q = []
+    const visited = {}
+
+    const pushWire = (x, z) => {
+        const kk = x + "," + wireY + "," + z
+        if (visited[kk]) return
+        if (api.getBlock(x, wireY, z) !== WIRE_BLOCK) return
+        visited[kk] = true
+        q.push([x, z])
+    }
+
+    pushWire(srcX + 1, srcZ)
+    pushWire(srcX - 1, srcZ)
+    pushWire(srcX, srcZ + 1)
+    pushWire(srcX, srcZ - 1)
+
+    let steps = 0
+    while (q.length && steps < MAX_WIRE) {
+        steps++
+        const cur = q.shift()
+        const wx = cur[0]
+        const wz = cur[1]
+
+        const dirs = [[1,0],[-1,0],[0,1],[0,-1]]
+        for (let d = 0; d < 4; d++) {
+            const dx = dirs[d][0]
+            const dz = dirs[d][1]
+            const nx = wx + dx
+            const nz = wz + dz
+
+            if (api.getBlock(nx, wireY, nz) === WIRE_BLOCK) pushWire(nx, nz)
+
+            const bSame = api.getBlock(nx, wireY, nz)
+            const bUp = api.getBlock(nx, wireY + 1, nz)
+            const bDown = api.getBlock(nx, wireY - 1, nz)
+
+            if (isPistonBaseBlockName(bSame)) poweredPistons[posKey(nx, wireY, nz)] = true
+
+            if (isLampBlock(bSame)) { poweredLamps[posKey(nx, wireY, nz)] = true; addKnownLamp(nx, wireY, nz) }
+            if (isLampBlock(bUp)) { poweredLamps[posKey(nx, wireY + 1, nz)] = true; addKnownLamp(nx, wireY + 1, nz) }
+            if (isLampBlock(bDown)) { poweredLamps[posKey(nx, wireY - 1, nz)] = true; addKnownLamp(nx, wireY - 1, nz) }
+        }
+    }
+}
+
+powerDirectNeighborsOfFireball = (fx, fy, fz, poweredPistons, poweredLamps) => {
+    const ns = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]
+    for (const n of ns) {
+        const x = fx + n[0], y = fy + n[1], z = fz + n[2]
+        const b = api.getBlock(x, y, z)
+
+        if (isPistonBaseBlockName(b)) poweredPistons[posKey(x, y, z)] = true
+
+        if (isLampBlock(b)) {
+            poweredLamps[posKey(x, y, z)] = true
+            addKnownLamp(x, y, z)
+        }
+    }
+}
+
+tick = (dt) => {
+    const poweredPistons = {}
+    const poweredLamps = {}
+
+    for (const k in fireballSources) {
+        const s = fireballSources[k]
+        const cur = api.getBlock(s.x, s.y, s.z)
+        if (!isBlockType(cur, POWER_BLOCK)) delete fireballSources[k]
+    }
+
+    const ids = api.getPlayerIds()
+
+    for (let i = 0; i < ids.length; i++) {
+        const platePos = getPlateUnderPlayer(ids[i])
+        if (platePos) powerNetworkFromSource(platePos[0], platePos[1], platePos[2], poweredPistons, poweredLamps)
+    }
+
+    for (const k in fireballSources) {
+        const s = fireballSources[k]
+        powerDirectNeighborsOfFireball(s.x, s.y, s.z, poweredPistons, poweredLamps)
+        powerNetworkFromSource(s.x, s.y, s.z, poweredPistons, poweredLamps)
+        powerNetworkFromSource(s.x, s.y + 1, s.z, poweredPistons, poweredLamps)
+        powerNetworkFromSource(s.x, s.y - 1, s.z, poweredPistons, poweredLamps)
+    }
+
+    for (const pistonKey in poweredPistons) {
+        const p = pistonKey.split(",")
+        const x = Number(p[0]), y = Number(p[1]), z = Number(p[2])
+        const info = getPistonInfoAt(x, y, z)
+        if (info) extendPiston(x, y, z, info)
+    }
+
+    const toRetract = []
+    for (const k in pistonExtended) {
+        if (!pistonExtended[k]) continue
+        if (poweredPistons[k]) continue
+
+        const p = k.split(",")
+        const x = Number(p[0]), y = Number(p[1]), z = Number(p[2])
+        const info = getPistonInfoAt(x, y, z)
+        if (!info) { pistonExtended[k] = false; continue }
+
+        pistonExtended[k] = false
+        toRetract.push({ x: x, y: y, z: z, info: info })
+    }
+
+    for (const item of toRetract) {
+        const bx = item.x, by = item.y, bz = item.z
+        const info = item.info
+
+        const hx = bx + info.dx
+        const hy = by + info.dy
+        const hz = bz + info.dz
+
+        const headNow = api.getBlock(hx, hy, hz)
+        if (info.kind === "sticky") {
+            if (isStickyHeadBlock(headNow) || headNow === info.head) api.setBlock(hx, hy, hz, "Air")
+        } else {
+            if (isNormalHeadBlock(headNow) || headNow === info.head) api.setBlock(hx, hy, hz, "Air")
+        }
+    }
+
+    for (const item of toRetract) {
+        const bx = item.x, by = item.y, bz = item.z
+        const info = item.info
+        if (info.kind !== "sticky") continue
+
+        const hx = bx + info.dx
+        const hy = by + info.dy
+        const hz = bz + info.dz
+
+        const nx = bx + info.dx * 2
+        const ny = by + info.dy * 2
+        const nz = bz + info.dz * 2
+
+        const pulled = api.getBlock(nx, ny, nz)
+        if (isAir(pulled)) continue
+        if (!isAir(api.getBlock(hx, hy, hz))) continue
+
+        if (isPistonBaseBlockName(pulled) && pistonExtended[posKey(nx, ny, nz)]) continue
+
+        api.setBlock(hx, hy, hz, pulled)
+        api.setBlock(nx, ny, nz, "Air")
+        trackMoveIfLamp(nx, ny, nz, hx, hy, hz, pulled)
+        trackMoveIfPistonBase(nx, ny, nz, hx, hy, hz, pulled)
+    }
+
+    for (const lampKey in poweredLamps) {
+        const p = lampKey.split(",")
+        const x = Number(p[0]), y = Number(p[1]), z = Number(p[2])
+        const cur = api.getBlock(x, y, z)
+        if (isLampOffBlock(cur)) api.setBlock(x, y, z, LAMP_ON)
+    }
+
+    for (const lampKey2 in knownLamps) {
+        if (poweredLamps[lampKey2]) continue
+        const p2 = lampKey2.split(",")
+        const x2 = Number(p2[0]), y2 = Number(p2[1]), z2 = Number(p2[2])
+        const cur2 = api.getBlock(x2, y2, z2)
+        if (isLampOnBlock(cur2)) api.setBlock(x2, y2, z2, LAMP_OFF)
+    }
+}
